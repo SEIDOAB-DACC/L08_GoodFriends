@@ -1,9 +1,10 @@
-﻿#define UseAzureKV
+﻿#define UseAzureKV          //comment out this line to use user-secrets instead of Azure Key Vault
+
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Azure.Identity;
 using Azure.Security.KeyVault.Secrets;
-using Microsoft.VisualBasic;
+using System.Xml.Linq;
 
 namespace Configuration;
 
@@ -11,16 +12,26 @@ public sealed class csAppConfig
 {
     static public string Heartbeat { get; } = $"Heartbeat from namespace {nameof(Configuration)}, class {nameof(csAppConfig)}";
 
-    //configuration storage
+    #region Configuration file locations
     public const string Appsettingfile = "appsettings.json";
-    public const string UserSecretId = "18a32a17-88a5-4e2f-a78b-37c90621261b";
-
+    public const string UserSecretsProjFile="../Configuration/Configuration.csproj";
+    #endregion
+ 
     #region Singleton design pattern
     private static readonly object instanceLock = new();
     private static csAppConfig _instance = null;
     #endregion
 
     #region Configuration data structures
+    //read the user secret Id from the project file. Only dduring development
+    private string _userSecretId { 
+        get {
+            string csprojPath = Path.Combine(Directory.GetCurrentDirectory(), UserSecretsProjFile);
+            XDocument csproj = XDocument.Load(csprojPath);
+            var userSecretsId = csproj.Descendants("UserSecretsId").FirstOrDefault()?.Value;
+            return userSecretsId;        
+    }}
+
     private IConfigurationRoot _configuration = null;
     private DbSetDetail _dbSetActive = new DbSetDetail();
     private List<DbSetDetail> _dbSets = new List<DbSetDetail>();
@@ -41,8 +52,9 @@ public sealed class csAppConfig
         //Create final ConfigurationRoot, _configuration which includes also AzureKeyVault
         var builder = new ConfigurationBuilder()
                             .SetBasePath(Directory.GetCurrentDirectory());
+
         //Load the user secrets file
-        builder = builder.AddUserSecrets(UserSecretId, reloadOnChange: true);
+        builder = builder.AddUserSecrets(_userSecretId, reloadOnChange: true);
 
         //override with any locally set configuration from appsettings.json
         builder = builder.AddJsonFile(Appsettingfile, optional: true, reloadOnChange: true);
@@ -52,7 +64,7 @@ public sealed class csAppConfig
         _configuration.Bind("DbSets", _dbSets); 
 
         //Set the active db set and fill in location and server into Login Details
-        var i = int.Parse(_configuration["DbSetActiveIdx"]);
+        int i = int.Parse(_configuration["DbSetActiveIdx"]);
         _dbSetActive = _dbSets[i];
         _dbSetActive.DbLogins.ForEach(i =>
         {
@@ -106,7 +118,9 @@ public sealed class csAppConfig
 
         return conn;
     }
-    public static string SecretSource => $"User secret: {((UserSecretId == null) ?Appsettingfile :UserSecretId)}";
+
+    public static string SecretSource => $"User secret: {((Instance._userSecretId == null) ?Appsettingfile :Instance._userSecretId)}";
+
     public static PasswordSaltDetails PasswordSalt => Instance._passwordSaltDetails;
     public static JwtConfig JwtConfig => Instance._jwtConfig;
 }
@@ -156,4 +170,5 @@ public class JwtConfig
     public bool ValidateLifetime { get; set; } = true;
 }
 #endregion
+
 
